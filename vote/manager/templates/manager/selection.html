@@ -1,0 +1,59 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Choisir une section</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #f3f4f6;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    select,
+    button {
+      padding: 10px;
+      font-size: 15px;
+      margin-top: 10px;
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+
+    .result {
+      margin-top: 20px;
+      font-weight: bold;
+      color: green;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>Choisir une section</h2>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.choix }}
+      <button type="submit">Valider</button>
+    </form>
+
+    {% if choix %}
+    <div class="result">
+      ✅ Section choisie : {{ choix }}
+    </div>
+    {% endif %}
+  </div>
+</body>
+
+</html>

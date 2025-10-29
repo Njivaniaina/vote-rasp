@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Connexion avec QR code</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Arial;
+      background: #f3f4f6;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    .login-box {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      width: 400px;
+      text-align: center;
+    }
+
+    h1 {
+      color: #0ea5a4;
+      margin-bottom: 15px;
+    }
+
+    input {
+      width: 90%;
+      padding: 10px;
+      margin: 6px 0;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 15px;
+    }
+
+    button {
+      padding: 10px 15px;
+      margin: 5px;
+      border: none;
+      border-radius: 6px;
+      background: #0ea5a4;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover {
+      background: #0d9488;
+    }
+
+    #qr-video {
+      width: 100%;
+      border-radius: 6px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .message {
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+
+    .error {
+      color: red;
+    }
+
+    .success {
+      color: green;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="login-box">
+    <h1>Connexion</h1>
+
+    {% if message %}
+    <div class="{% if '❌' in message %}error{% else %}success{% endif %}">{{ message }}</div>
+    {% endif %}
+
+    <form method="post" id="login-form">
+      {% csrf_token %}
+      <input type="text" id="username" name="matricule" placeholder="Identifiant / Matricule">
+      <input type="password" name="password" placeholder="Mot de passe">
+      <div style="margin-top:10px;">
+        <button type="button" id="start-scan">Scan QR</button>
+        <button type="button" id="reset-username">Reset</button>
+        <button type="submit">Se connecter</button>
+      </div>
+    </form>
+
+    <div id="qr-reader" style="margin-top:15px;"></div>
+  </div>
+
+  {% load static %}
+  <script src="{% static 'manager/js/html5-qrcode.min.js' %}"></script>
+
+  <script>
+    let qrScanner = null;
+    let scanning = false;
+
+    const usernameInput = document.getElementById('username');
+    const startBtn = document.getElementById('start-scan');
+    const resetBtn = document.getElementById('reset-username');
+    const qrReaderDiv = document.getElementById('qr-reader');
+
+    // Fonction pour démarrer le scan QR
+    startBtn.addEventListener('click', () => {
+      if (scanning) return;
+      scanning = true;
+      qrReaderDiv.style.display = "block";
+
+      qrScanner = new Html5Qrcode("qr-reader");
+      qrScanner.start(
+        {facingMode: "environment"}, // caméra arrière
+        {
+          fps: 10,
+          qrbox: {width: 250, height: 250}
+        },
+        (decodedText, decodedResult) => {
+          // Mettre le résultat dans le champ username
+          usernameInput.value = decodedText;
+          console.log("QR code détecté:", decodedText);
+          // Arrêter le scanner après lecture
+          qrScanner.stop().then(() => {
+            scanning = false;
+            qrReaderDiv.style.display = "none";
+          }).catch(err => console.log(err));
+        },
+        (errorMessage) => {
+          // optionnel : gérer les erreurs de scan
+          console.log("QR scan error:", errorMessage);
+        }
+      ).catch(err => console.error("Impossible de démarrer le scan:", err));
+    });
+
+    // Reset du champ username
+    resetBtn.addEventListener('click', () => {
+      usernameInput.value = '';
+      if (scanning && qrScanner) {
+        qrScanner.stop().then(() => {
+          scanning = false;
+          qrReaderDiv.style.display = "none";
+        }).catch(err => console.log(err));
+      }
+    });
+  </script>
+</body>
+
+</html>

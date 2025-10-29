@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Reconnaissance faciale - Scan temps réel</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      color: #222;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 18px;
+    }
+
+    video {
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    .controls {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    button {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 0;
+      cursor: pointer;
+      background: #0ea5a4;
+      color: white;
+    }
+
+    button.secondary {
+      background: #64748b;
+    }
+
+    .status {
+      text-align: center;
+      margin: 10px 0;
+      font-weight: 600;
+    }
+
+    .result {
+      margin-top: 20px;
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .card {
+      background: white;
+      padding: 12px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(2, 6, 23, 0.06);
+      width: 320px;
+      text-align: center;
+    }
+
+    .card h4 {
+      margin: 6px 0;
+      font-size: 16px;
+    }
+
+    .card img {
+      max-width: 100%;
+      border-radius: 8px;
+      display: block;
+      margin: 8px auto;
+    }
+
+    .message.ok {
+      color: green;
+      font-weight: 700;
+    }
+
+    .message.bad {
+      color: #c2410c;
+      font-weight: 700;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #555;
+    }
+  </style>
+</head>
+
+<header>
+  <h1>🔎 Reconnaissance faciale — Scan automatique (5s)</h1>
+  <p class="small">La page capture la caméra, envoie un frame toutes les 5 secondes et affiche le meilleur match.</p>
+
+  <!-- Bouton de déconnexion -->
+  {% if request.user.is_authenticated %}
+  <div style="text-align:right; margin-top:8px;">
+    <form action="{% url 'logout' %}" method="post" style="display:inline;">
+      {% csrf_token %}
+      <button type="submit" style="background:#c2410c;">Déconnexion</button>
+    </form>
+  </div>
+  {% endif %}
+</header>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>🔎 Reconnaissance faciale — Scan automatique (5s)</h1>
+      <p class="small">La page capture la caméra, envoie un frame toutes les 5 secondes et affiche le meilleur match.
+      </p>
+    </header>
+
+    <!-- Video preview -->
+    <div style="display:flex; justify-content:center;">
+      <video id="video" width="640" height="480" autoplay playsinline muted></video>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn" class="secondary">Démarrer</button>
+      <button id="stopBtn">Arrêter</button>
+      <div style="min-width:220px; text-align:center;">
+        <div id="status" class="status">Caméra : attente...</div>
+        <div class="small">Images préchargées : <span id="preloaded-count">{{ preloaded_count }}</span></div>
+      </div>
+    </div>
+
+    <!-- hidden canvas (pour capturer frames) -->
+    <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+
+    <!-- Résultats -->
+    <div class="result" id="resultContainer">
+      <!-- zone mise à jour dynamiquement -->
+      {% if message %}
+      <div class="card">
+        <h4>Résultat initial</h4>
+        <div id="initial-message" class="message {% if 'Même' in message %}ok{% else %}bad{% endif %}">{{ message }}
+        </div>
+        {% if similarity %}
+        <p class="small">Similarité : {{ similarity|floatformat:3 }}</p>
+        {% endif %}
+        {% if uploaded_img_b64 %}
+        <h4>Image envoyée</h4>
+        <img src="{{ uploaded_img_b64 }}" alt="upload">
+        {% endif %}
+        {% if best_match %}
+        <h4>Meilleur match</h4>
+        <img src="{{ best_match.img_b64 }}" alt="{{ best_match.filename }}">
+        <p class="small">{{ best_match.filename }}</p>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    /*
+      Template JS :
+      - Demande la caméra,
+      - setInterval toutes les 5s pour capturer un frame et l'envoyer en POST vers la même URL,
+      - Lit la réponse HTML renvoyée par Django et met à jour la zone résultat.
+    */
+
+    /* Récupère le cookie csrftoken (pattern Django) */
+    function getCookie(name) {
+      const val = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith(name + '='));
+      if (!val) return null;
+      return decodeURIComponent(val.split('=')[1]);
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    /* éléments */
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+    const resultContainer = document.getElementById('resultContainer');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const preloadedCountEl = document.getElementById('preloaded-count');
+
+    let stream = null;
+    let intervalId = null;
+    let running = false;
+    const INTERVAL_MS = 5000;  // 5 seconds
+
+    /* Demande l'accès à la caméra */
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}, audio: false});
+        video.srcObject = stream;
+        statusEl.textContent = "Caméra prête ✅";
+      } catch (err) {
+        console.error("Erreur accès caméra:", err);
+        statusEl.textContent = "Erreur d'accès caméra ❌";
+      }
+    }
+
+    /* Stop camera stream */
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        video.srcObject = null;
+      }
+      statusEl.textContent = "Caméra arrêtée";
+    }
+
+    /* Prend un frame depuis la video et retourne un Blob jpeg */
+    function captureFrameBlob() {
+      const w = canvas.width;
+      const h = canvas.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, w, h);
+      return new Promise((resolve) => {
+        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.85);
+      });
+    }
+
+    /* Envoi du frame au serveur (POST multipart/form-data) - champ attendu: 'image1' */
+    async function sendFrame() {
+      if (!stream) {
+        console.warn("Camera non initialisée");
+        return;
+      }
+      statusEl.textContent = "Envoi du frame...";
+      try {
+        const blob = await captureFrameBlob();
+        if (!blob) {
+          statusEl.textContent = "Impossible de capturer le frame";
+          return;
+        }
+
+        // construire formdata avec le même nom de champ que ta vue attend ('image1')
+        const fd = new FormData();
+        fd.append('image1', blob, 'frame.jpg');
+
+        // Envoi au même URL que la page actuelle (la vue 'reconnaissance_view' qui attend POST)
+        const response = await fetch(window.location.pathname, {
+          method: 'POST',
+          body: fd,
+          headers: {
+            'X-CSRFToken': csrftoken  // token pour Django
+          },
+          credentials: 'same-origin'
+        });
+
+        const text = await response.text();
+        // Parser la réponse HTML et en extraire les informations (message, similarity, images)
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+
+        // message renvoyé par la vue — élément que nous afficherons
+        const msgElem = doc.querySelector('#initial-message') || doc.querySelector('.message');
+        const similarityElem = doc.querySelector('p.small') || null;
+        const uploadedImg = doc.querySelector('img[alt="upload"]') || doc.querySelector('img[alt="Image uploadée"]') || null;
+        const bestMatchImg = doc.querySelector('img[alt^="Image matchée"]') || doc.querySelector('.card img[alt]:not([alt="upload"])') || null;
+        const bestMatchLabel = doc.querySelector('.card .small') || null;
+
+        // Construire un bloc de résultat localement
+        const block = document.createElement('div');
+        block.className = 'card';
+
+        const h = document.createElement('h4');
+        h.textContent = 'Résultat (en temps réel)';
+        block.appendChild(h);
+
+        if (msgElem) {
+          const m = document.createElement('div');
+          const txt = msgElem.textContent.trim();
+          m.id = 'initial-message-live';
+          m.className = 'message ' + (txt.includes('Même') ? 'ok' : 'bad');
+          m.textContent = txt;
+          block.appendChild(m);
+        }
+
+        if (similarityElem) {
+          const p = document.createElement('p');
+          p.className = 'small';
+          p.textContent = similarityElem.textContent.trim();
+          block.appendChild(p);
+        }
+
+        if (uploadedImg) {
+          const t = document.createElement('h4'); t.textContent = 'Image envoyée';
+          block.appendChild(t);
+          const img = document.createElement('img');
+          img.src = uploadedImg.src;
+          img.alt = 'upload';
+          block.appendChild(img);
+        }
+
+        if (bestMatchImg) {
+          const t2 = document.createElement('h4'); t2.textContent = 'Meilleur match';
+          block.appendChild(t2);
+          const img2 = document.createElement('img');
+          img2.src = bestMatchImg.src;
+          img2.alt = bestMatchImg.alt || 'match';
+          block.appendChild(img2);
+          if (bestMatchLabel) {
+            const lbl = document.createElement('p');
+            lbl.className = 'small';
+            lbl.textContent = bestMatchLabel.textContent.trim();
+            block.appendChild(lbl);
+          }
+        }
+
+        // remplacer le résultat actuel par le nouveau (garder une seule carte)
+        resultContainer.innerHTML = '';
+        resultContainer.appendChild(block);
+
+        statusEl.textContent = '✅ Envoi réussi';
+      } catch (err) {
+        console.error('Erreur en envoi:', err);
+        statusEl.textContent = '❌ Erreur lors de l’envoi';
+      }
+    }
+
+    /* Lancer la boucle périodique */
+    function startLoop() {
+      if (running) return;
+      running = true;
+      // envoie tout de suite un premier frame, puis toutes les INTERVAL_MS
+      sendFrame();
+      intervalId = setInterval(sendFrame, INTERVAL_MS);
+      statusEl.textContent = 'Scan automatique activé (toutes les 5s)';
+    }
+
+    /* Arrêter la boucle */
+    function stopLoop() {
+      if (!running) return;
+      running = false;
+      clearInterval(intervalId);
+      intervalId = null;
+      statusEl.textContent = 'Scan automatique arrêté';
+    }
+
+    /* Boutons */
+    startBtn.addEventListener('click', async () => {
+      if (!stream) await startCamera();
+      startLoop();
+    });
+    stopBtn.addEventListener('click', () => {
+      stopLoop();
+      // on peut aussi arrêter la caméra si souhaité:
+      // stopCamera();
+    });
+
+    /* Démarrage auto (optionnel) : démarre la caméra mais ne lance pas l'envoi */
+    window.addEventListener('load', async () => {
+      // afficher le nombre d'images préchargées si fourni par Django
+      // (déjà injecté via template variable)
+      try {
+        await startCamera();
+      } catch (e) {
+        console.warn('Impossible d\'init camera au chargement :', e);
+      }
+    });
+  </script>
+</body>
+
+</html>
