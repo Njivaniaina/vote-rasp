@@ -11,6 +11,9 @@ from django.contrib.auth import authenticate, login, logout
 import requests
 from django.contrib.auth.models import User
 from .forms import SectionChoiceForm
+from django.shortcuts import render, redirect
+from django.views.decorators.http import require_http_methods
+from django.utils.safestring import mark_safe
 
 
 # --- Configuration model InsightFace (préchargé une seule fois) ---
@@ -96,8 +99,15 @@ def reconnaissance_view(request):
     if not request.user.is_authenticated:
         # Rediriger vers la page de login si non connecté
         return redirect('/')
+    
+    if 'choix' not in request.session:
+        return redirect('selection')
 
-    print(request.session['choix'])
+
+    if 'person' in request.session:
+        return redirect('vote')
+
+    # print(request.session['choix'])
 
 
     similarity = None
@@ -153,7 +163,29 @@ def reconnaissance_view(request):
                         # seuil — tu peux l'ajuster
                         seuil = 0.4
                         if similarity > seuil:
-                            message = f"Même personne (similarité={similarity:.3f} filename {best_match['filename']})"
+                            item = request.session['choix']
+                            # print(item)
+                            try:
+                                response = requests.get(
+                                    f'http://192.168.11.116:4000/person/information?id_tour={item['tour'][0]['id']}&image={best_match['filename']}',
+                                    timeout=5
+                                )
+                
+                                data = response.json()
+    
+                                if data.get('msg'):
+                                    print(data.get('msg'))
+                                    message = "❌ Utilisateur à déjà voté"
+                                else:
+                                    message = f"Même personne (similarité={similarity:.3f} filename {best_match['filename']}), data {data}"
+                                    request.session['person'] = data
+                                    # print(data)
+                                    return redirect('vote')
+
+                            except requests.RequestException as e:
+                                print("Erreur lors de la requête externe :", e)
+                                message = "❌ Impossible de contacter la base externe"
+                
                         else:
                             message = f"Personnes différentes (similarité={similarity:.3f})"
     else:
@@ -202,7 +234,7 @@ def login_view(request):
                 else:
                     message = "✅ Utilisateur vérifié sur la base externe"
                     print("✅ Utilisateur vérifié sur la base externe")
-                    print(data)
+                    #print(data)
 
                     # 🔹 Optionnel : créer l'utilisateur local s'il n'existe pas
                     user, created = User.objects.get_or_create(username=matricule)
@@ -231,6 +263,7 @@ def logout_view(request):
     Déconnexion utilisateur.
     """
     request.session.pop('choix', None)
+    request.session.pop('person', None)
     logout(request)
     return redirect('/')
 
@@ -271,10 +304,103 @@ def section_choice_view(request):
             if item:
                 # 🔹 stocker toutes les variables dans la session
                 request.session['choix'] = item
+                try:
+                    response = requests.get(f"http://192.168.11.116:4000/candidat/candidatintour?id_tour={item['tour'][0]['id']}", timeout=5)
+                    #print(f"http://192.168.11.116:4000/getcandidat/candidatintour?id_tour={item['tour'][0]['id']}")
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    request.session['candidat'] = data 
+                    #print(data[0])
+                except requests.RequestException as e:
+                    print("Erreur API:", e)
+                    
                 return redirect('reconnaissance')  # rediriger après choix
 
     return render(request, 'manager/selection.html', {
         'form': form,
         'choix': choix
     })
+
+
+
+
+@require_http_methods(["GET", "POST"])
+def cart_vote_view(request):
+    """
+    GET : affiche la grille de candidats (depuis request.session['candidat'])
+    POST: attend un form POST classique avec 'candidate_id' -> confirme le vote
+          et met à jour request.session['candidat'] (marque le candidat élu, incrémente votes si présent).
+    IMPORTANT : nous n'ajoutons pas de clés 'voted_for' ou 'voted_for_info'.
+    """
+    # Récupérer la liste des candidats depuis la session
+    candidats = request.session.get('candidat')
+
+    #print(candidats[0])
+    if 'choix' not in request.session or 'person' not in request.session :
+        return redirect('selection')
+
+    
+    message = None
+
+    if request.method == 'POST':
+        candidate_id = request.POST.get('candidate_id')
+
+        if not candidate_id:
+            message = "Donnée invalide."
+            # redirect pour éviter re-POST
+            request.session.modified = True
+            return redirect(request.path)
+
+        
+        # Trouver le candidat et mettre à jour la session['candidat']
+        found = False
+        selected = {}
+        for c in candidats:
+            if str(c.get('number')) == str(candidate_id):
+                found = True
+                selected = c 
+            else:
+                # s'assurer que les autres ne sont pas marqués
+                if 'selected' in c:
+                    c.pop('selected', None)
+        # marquer la session comme modifiée et sauvegarder
+        request.session['candidat'] = candidats
+        request.session.modified = True
+
+        if found:
+            #request.session['_cart_vote_message'] = f"Vote enregistré pour l'ID {candidate_id}."
+            item = request.session['choix'] 
+            person = request.session['person']
+            try:
+                response = requests.post(
+                    'http://192.168.11.116:4000/vote',
+                    json={'id_tour': item['tour'][0]['id'], 'cin': person['CIN'], 'numero_candidat': selected["number"]},
+                    timeout=5
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data:
+                    request.session.pop('person', None)
+                    return redirect('reconnaissance')
+                    
+            except requests.RequestException as e:
+                print("Erreur API:", e)
+
+        #else:
+            #request.session['_cart_vote_message'] = "Candidat introuvable."
+        #    continue
+
+        return redirect(request.path)
+
+    # GET : afficher éventuellement un message stocké en session (puis le supprimer)
+    # msg = request.session.pop('_cart_vote_message', None)
+    #print(candidats)
+
+    # Rendre la page
+    context = {
+        'candidates': candidats,
+    }
+    return render(request, 'manager/vote.html', context)
+
 

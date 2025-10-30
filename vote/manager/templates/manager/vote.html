@@ -1,0 +1,138 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Vote - Cartes (simple)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f7f7f8;
+      color: #222;
+      padding: 20px;
+    }
+
+    .wrap {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: white;
+      padding: 12px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(2, 6, 23, 0.06);
+      text-align: center;
+      cursor: pointer;
+      transition: transform .12s, box-shadow .12s;
+    }
+
+    .card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 12px 28px rgba(2, 6, 23, 0.12);
+    }
+
+    .card.selected {
+      border: 3px solid #0ea5a4;
+      background: #f0fdf4;
+    }
+
+    .name {
+      font-weight: 700;
+      margin-top: 8px;
+    }
+
+    .desc {
+      font-size: 13px;
+      color: #666;
+      margin: 8px 0;
+      min-height: 36px;
+    }
+
+    .votes {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #333;
+    }
+
+    .msg {
+      margin-top: 14px;
+      font-weight: 700;
+      color: green;
+    }
+
+    form.hidden {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🗳️ Vote - Choisissez un candidat</h1>
+      <div>
+        {% if message %}
+        <div class="msg">{{ message }}</div>
+        {% endif %}
+      </div>
+    </header>
+
+    <div class="grid" id="candidatesGrid">
+      {% for c in candidates %}
+      <div class="card " data-id="{{ c.number }}">
+        <div class="name">{{ c.person.firstname }}</div>
+        <div class="name">{{ c.person.lastname }}</div>
+        <div class="desc">{{ c.numero_election }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Formulaire caché pour envoi POST classique (CSRF requis) -->
+    <form id="voteForm" method="post" class="hidden">
+      {% csrf_token %}
+      <input type="hidden" name="candidate_id" id="candidateInput" value="">
+    </form>
+  </div>
+
+  <script>
+    (function () {
+      const grid = document.getElementById('candidatesGrid');
+      const voteForm = document.getElementById('voteForm');
+      const candidateInput = document.getElementById('candidateInput');
+
+      grid.addEventListener('click', function (e) {
+        const card = e.target.closest('.card');
+        if (!card) return;
+        const candidateId = card.dataset.id;
+
+
+        const name = card.querySelector('.name').textContent.trim();
+        if (!confirm(`Confirmer votre vote pour "${name}" ?`)) {
+          return;
+        }
+
+        // Remplir le champ et soumettre le form (POST classique)
+        candidateInput.value = candidateId;
+        voteForm.submit();
+      });
+    })();
+  </script>
+</body>
+
+</html>

@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <title>Reconnaissance faciale - Scan temps réel</title>
+  <title>Reconnaissance faciale — capture unique</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body {
@@ -72,18 +72,6 @@
       text-align: center;
     }
 
-    .card h4 {
-      margin: 6px 0;
-      font-size: 16px;
-    }
-
-    .card img {
-      max-width: 100%;
-      border-radius: 8px;
-      display: block;
-      margin: 8px auto;
-    }
-
     .message.ok {
       color: green;
       font-weight: 700;
@@ -101,27 +89,20 @@
   </style>
 </head>
 
-<header>
-  <h1>🔎 Reconnaissance faciale — Scan automatique (5s)</h1>
-  <p class="small">La page capture la caméra, envoie un frame toutes les 5 secondes et affiche le meilleur match.</p>
-
-  <!-- Bouton de déconnexion -->
-  {% if request.user.is_authenticated %}
-  <div style="text-align:right; margin-top:8px;">
-    <form action="{% url 'logout' %}" method="post" style="display:inline;">
-      {% csrf_token %}
-      <button type="submit" style="background:#c2410c;">Déconnexion</button>
-    </form>
-  </div>
-  {% endif %}
-</header>
-
 <body>
   <div class="container">
     <header>
-      <h1>🔎 Reconnaissance faciale — Scan automatique (5s)</h1>
-      <p class="small">La page capture la caméra, envoie un frame toutes les 5 secondes et affiche le meilleur match.
-      </p>
+      <h1>🔎 Reconnaissance faciale — capture unique</h1>
+      <p class="small">Cliquez sur "Capturer & Envoyer" pour envoyer un seul frame au serveur.</p>
+
+      {% if request.user.is_authenticated %}
+      <div style="text-align:right; margin-top:8px;">
+        <form action="{% url 'logout' %}" method="post" style="display:inline;">
+          {% csrf_token %}
+          <button type="submit" style="background:#c2410c;">Déconnexion</button>
+        </form>
+      </div>
+      {% endif %}
     </header>
 
     <!-- Video preview -->
@@ -130,20 +111,19 @@
     </div>
 
     <div class="controls">
-      <button id="startBtn" class="secondary">Démarrer</button>
-      <button id="stopBtn">Arrêter</button>
-      <div style="min-width:220px; text-align:center;">
-        <div id="status" class="status">Caméra : attente...</div>
-        <div class="small">Images préchargées : <span id="preloaded-count">{{ preloaded_count }}</span></div>
-      </div>
+      <button id="startBtn" class="secondary">Démarrer caméra</button>
+      <button id="stopBtn">Arrêter caméra</button>
+      <button id="captureBtn">Capturer & Envoyer</button>
     </div>
 
-    <!-- hidden canvas (pour capturer frames) -->
+    <div style="min-width:220px; text-align:center; margin-top:10px;">
+      <div id="status" class="status">Caméra : attente...</div>
+      <div class="small">Images préchargées : <span id="preloaded-count">{{ preloaded_count }}</span></div>
+    </div>
+
     <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
 
-    <!-- Résultats -->
     <div class="result" id="resultContainer">
-      <!-- zone mise à jour dynamiquement -->
       {% if message %}
       <div class="card">
         <h4>Résultat initial</h4>
@@ -154,11 +134,11 @@
         {% endif %}
         {% if uploaded_img_b64 %}
         <h4>Image envoyée</h4>
-        <img src="{{ uploaded_img_b64 }}" alt="upload">
+        <img src="{{ uploaded_img_b64 }}" alt="upload" style="max-width:280px;">
         {% endif %}
         {% if best_match %}
         <h4>Meilleur match</h4>
-        <img src="{{ best_match.img_b64 }}" alt="{{ best_match.filename }}">
+        <img src="{{ best_match.img_b64 }}" alt="{{ best_match.filename }}" style="max-width:280px;">
         <p class="small">{{ best_match.filename }}</p>
         {% endif %}
       </div>
@@ -167,18 +147,11 @@
   </div>
 
   <script>
-    /*
-      Template JS :
-      - Demande la caméra,
-      - setInterval toutes les 5s pour capturer un frame et l'envoyer en POST vers la même URL,
-      - Lit la réponse HTML renvoyée par Django et met à jour la zone résultat.
-    */
-
-    /* Récupère le cookie csrftoken (pattern Django) */
+    /* utilitaires CSRF */
     function getCookie(name) {
-      const val = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith(name + '='));
-      if (!val) return null;
-      return decodeURIComponent(val.split('=')[1]);
+      const v = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith(name + '='));
+      if (!v) return null;
+      return decodeURIComponent(v.split('=')[1]);
     }
     const csrftoken = getCookie('csrftoken');
 
@@ -186,17 +159,14 @@
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const statusEl = document.getElementById('status');
-    const resultContainer = document.getElementById('resultContainer');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
-    const preloadedCountEl = document.getElementById('preloaded-count');
+    const captureBtn = document.getElementById('captureBtn');
+    const resultContainer = document.getElementById('resultContainer');
 
     let stream = null;
-    let intervalId = null;
-    let running = false;
-    const INTERVAL_MS = 5000;  // 5 seconds
 
-    /* Demande l'accès à la caméra */
+    /* Démarrer la caméra */
     async function startCamera() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}, audio: false});
@@ -208,7 +178,7 @@
       }
     }
 
-    /* Stop camera stream */
+    /* Arrêter la caméra */
     function stopCamera() {
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
@@ -218,63 +188,66 @@
       statusEl.textContent = "Caméra arrêtée";
     }
 
-    /* Prend un frame depuis la video et retourne un Blob jpeg */
+    /* Capture un frame et retourne un Blob JPEG */
     function captureFrameBlob() {
       const w = canvas.width;
       const h = canvas.height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, w, h);
-      return new Promise((resolve) => {
-        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.85);
-      });
+      return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9));
     }
 
-    /* Envoi du frame au serveur (POST multipart/form-data) - champ attendu: 'image1' */
-    async function sendFrame() {
+    /* Envoi unique du frame vers la vue via fetch multipart/form-data */
+    async function captureAndSend() {
       if (!stream) {
-        console.warn("Camera non initialisée");
+        statusEl.textContent = "Caméra non initialisée";
         return;
       }
-      statusEl.textContent = "Envoi du frame...";
+      statusEl.textContent = "Capture en cours...";
       try {
         const blob = await captureFrameBlob();
         if (!blob) {
-          statusEl.textContent = "Impossible de capturer le frame";
+          statusEl.textContent = "Erreur de capture";
           return;
         }
 
-        // construire formdata avec le même nom de champ que ta vue attend ('image1')
         const fd = new FormData();
         fd.append('image1', blob, 'frame.jpg');
 
-        // Envoi au même URL que la page actuelle (la vue 'reconnaissance_view' qui attend POST)
-        const response = await fetch(window.location.pathname, {
+        // Envoi au même endpoint (la vue reconnaissance_view attend POST avec image1)
+        const resp = await fetch(window.location.pathname, {
           method: 'POST',
           body: fd,
           headers: {
-            'X-CSRFToken': csrftoken  // token pour Django
+            'X-CSRFToken': csrftoken
           },
-          credentials: 'same-origin'
+          credentials: 'same-origin',
+          redirect: 'follow' // laisser suivre les redirect
         });
 
-        const text = await response.text();
-        // Parser la réponse HTML et en extraire les informations (message, similarity, images)
+        // Si la vue a renvoyé une redirection finale (ex: redirect('vote')),
+        // fetch suit la redirection et resp.redirected devient true et resp.url la nouvelle URL.
+        if (resp.redirected) {
+          // rediriger le navigateur vers l'URL finale
+          window.location.href = resp.url;
+          return;
+        }
+
+        // Sinon on parse le HTML renvoyé et on met à jour la zone résultat
+        const text = await resp.text();
         const parser = new DOMParser();
         const doc = parser.parseFromString(text, 'text/html');
 
-        // message renvoyé par la vue — élément que nous afficherons
         const msgElem = doc.querySelector('#initial-message') || doc.querySelector('.message');
         const similarityElem = doc.querySelector('p.small') || null;
         const uploadedImg = doc.querySelector('img[alt="upload"]') || doc.querySelector('img[alt="Image uploadée"]') || null;
         const bestMatchImg = doc.querySelector('img[alt^="Image matchée"]') || doc.querySelector('.card img[alt]:not([alt="upload"])') || null;
         const bestMatchLabel = doc.querySelector('.card .small') || null;
 
-        // Construire un bloc de résultat localement
         const block = document.createElement('div');
         block.className = 'card';
 
-        const h = document.createElement('h4');
-        h.textContent = 'Résultat (en temps réel)';
+        const h = document.createElement('h4'); h.textContent = 'Résultat';
         block.appendChild(h);
 
         if (msgElem) {
@@ -317,56 +290,24 @@
           }
         }
 
-        // remplacer le résultat actuel par le nouveau (garder une seule carte)
         resultContainer.innerHTML = '';
         resultContainer.appendChild(block);
+        statusEl.textContent = '✅ Envoi terminé';
 
-        statusEl.textContent = '✅ Envoi réussi';
       } catch (err) {
-        console.error('Erreur en envoi:', err);
+        console.error('Erreur envoi:', err);
         statusEl.textContent = '❌ Erreur lors de l’envoi';
       }
     }
 
-    /* Lancer la boucle périodique */
-    function startLoop() {
-      if (running) return;
-      running = true;
-      // envoie tout de suite un premier frame, puis toutes les INTERVAL_MS
-      sendFrame();
-      intervalId = setInterval(sendFrame, INTERVAL_MS);
-      statusEl.textContent = 'Scan automatique activé (toutes les 5s)';
-    }
+    /* événements */
+    startBtn.addEventListener('click', async () => {if (!stream) await startCamera();});
+    stopBtn.addEventListener('click', () => stopCamera());
+    captureBtn.addEventListener('click', () => captureAndSend());
 
-    /* Arrêter la boucle */
-    function stopLoop() {
-      if (!running) return;
-      running = false;
-      clearInterval(intervalId);
-      intervalId = null;
-      statusEl.textContent = 'Scan automatique arrêté';
-    }
-
-    /* Boutons */
-    startBtn.addEventListener('click', async () => {
-      if (!stream) await startCamera();
-      startLoop();
-    });
-    stopBtn.addEventListener('click', () => {
-      stopLoop();
-      // on peut aussi arrêter la caméra si souhaité:
-      // stopCamera();
-    });
-
-    /* Démarrage auto (optionnel) : démarre la caméra mais ne lance pas l'envoi */
+    /* initialisation auto (optionnel) */
     window.addEventListener('load', async () => {
-      // afficher le nombre d'images préchargées si fourni par Django
-      // (déjà injecté via template variable)
-      try {
-        await startCamera();
-      } catch (e) {
-        console.warn('Impossible d\'init camera au chargement :', e);
-      }
+      try {await startCamera();} catch (e) {console.warn('Impossible d\'init camera :', e);}
     });
   </script>
 </body>
